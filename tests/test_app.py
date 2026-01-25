@@ -49,8 +49,8 @@ class TestRedactor(unittest.TestCase):
         
         # Verify it found 'DEP-999' and tried to redact it
         mock_page.search_for.assert_called_with("DEP-999")
-        mock_page.add_redact_annot.assert_called()
-        mock_page.apply_redactions.assert_called()
+        mock_page.draw_rect.assert_called()
+        mock_page.insert_text.assert_called()
 
 if __name__ == "__main__":
     unittest.main()
