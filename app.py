@@ -25,8 +25,9 @@ class RedactionEngine:
         return matches
 
     def _get_font_info(self, page, rect):
-        """Extract font size from text at the given rectangle."""
+        """Extract font size and name from text at the given rectangle."""
         font_size = 12  # default font size
+        font_name = "helv"  # default font
 
         try:
             text_dict = page.get_text("dict")
@@ -45,12 +46,13 @@ class RedactionEngine:
                         span_rect = fitz.Rect(span["bbox"])
                         if span_rect.intersects(rect):
                             font_size = span["size"]
-                            return font_size
+                            font_name = span["font"]
+                            return font_size, font_name
         except (AttributeError, KeyError, json.JSONDecodeError, TypeError):
-            # If anything fails, just use default
+            # If anything fails, just use defaults
             pass
 
-        return font_size
+        return font_size, font_name
 
     def redact_page(self, page):
         """Finds patterns on a page and applies physical redactions."""
@@ -62,8 +64,8 @@ class RedactionEngine:
         for pii_str, replacement in set(matches):
             areas = page.search_for(pii_str)
             for rect in areas:
-                # Extract font size from the original text
-                font_size = self._get_font_info(page, rect)
+                # Extract font size and name from the original text
+                font_size, font_name = self._get_font_info(page, rect)
 
                 # Draw a white rectangle to cover the original text
                 page.draw_rect(rect, fill=(1, 1, 1), color=None)
@@ -72,13 +74,24 @@ class RedactionEngine:
                 # Position the text at the top-left of the rect area
                 text_point = fitz.Point(rect.x0, rect.y0 + font_size * 0.75)
 
-                page.insert_text(
-                    text_point,
-                    replacement,
-                    fontsize=font_size,
-                    fontname="helv",
-                    color=(0, 0, 0),
-                )
+                try:
+                    # Try to use the original font name
+                    page.insert_text(
+                        text_point,
+                        replacement,
+                        fontsize=font_size,
+                        fontname=font_name,
+                        color=(0, 0, 0),
+                    )
+                except Exception:
+                    # If font is not available, fall back to helvetica
+                    page.insert_text(
+                        text_point,
+                        replacement,
+                        fontsize=font_size,
+                        fontname="helv",
+                        color=(0, 0, 0),
+                    )
 
                 count += 1
 
