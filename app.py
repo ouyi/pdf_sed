@@ -3,6 +3,8 @@ import sys
 import fitz  # PyMuPDF
 import re
 import json
+import random
+import string
 
 
 class RedactionEngine:
@@ -62,6 +64,12 @@ class RedactionEngine:
         count = 0
         # Use set() to avoid trying to redact the same word twice on one page
         for pii_str, replacement in set(matches):
+            # Generate random string if replacement is None or empty
+            if not replacement:
+                replacement = "".join(
+                    random.choices(string.ascii_letters + string.digits, k=len(pii_str))
+                )
+
             areas = page.search_for(pii_str)
             for rect in areas:
                 # Extract font size and name from the original text
@@ -129,7 +137,7 @@ def main():
         "--replace",
         action="append",
         required=True,
-        help="Text to replace the match with (e.g. '[ID]')",
+        help="Text to replace the match with (e.g. '[ID]'). Use empty string '' for random text.",
     )
 
     args = parser.parse_args()
