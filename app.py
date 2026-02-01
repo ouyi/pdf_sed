@@ -42,7 +42,7 @@ class RedactionEngine:
         # Defaults
         font_size = 11
         font_name = "helv"
-        font_ascent = 0.95
+        font_ascent = 0.718
 
         best_area = 0
 
@@ -119,7 +119,7 @@ class RedactionEngine:
 
             for rect in areas:
                 # 1. ANALYSIS: Get info (now using Best Overlap logic)
-                font_size, font_name, ascent = self._get_font_info(page, rect)
+                font_size, font_name, font_ascent = self._get_font_info(page, rect)
 
                 # 2. MARKING: Mark Redaction
                 # fill=(1, 1, 1) ensures the area becomes white after application.
@@ -132,7 +132,7 @@ class RedactionEngine:
                         "text": replacement,
                         "fontsize": font_size,
                         "fontname": font_name,
-                        "ascent": ascent,
+                        "ascent": font_ascent,
                     }
                 )
                 count += 1
