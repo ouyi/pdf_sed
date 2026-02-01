@@ -8,7 +8,14 @@ import string
 
 
 class RedactionEngine:
-    """Handles text replacement based on a list of (pattern, replacement) tuples."""
+    """
+    Handles text replacement based on a list of (pattern, replacement) tuples.
+
+    The core logic follows a strict 3-step process to ensure visibility:
+    1. FIND: Locate text and save its properties (font, size, location).
+    2. CLEAN: Apply redactions (draw white boxes over old text).
+    3. WRITE: Insert new text on top of the white boxes.
+    """
 
     def __init__(self, pattern_pairs):
         # pattern_pairs is a list of tuples: [ (regex_str, replace_str), ... ]
@@ -32,9 +39,10 @@ class RedactionEngine:
         font_name = "helv"  # default font
 
         try:
+            # "dict" format gives us hierarchy: block -> line -> span -> char
             text_dict = page.get_text("dict")
 
-            # Handle case where get_text returns a string (e.g., in tests)
+            # Handle case where get_text returns a string (e.g., in some test mocks)
             if isinstance(text_dict, str):
                 text_dict = json.loads(text_dict)
 
@@ -46,62 +54,93 @@ class RedactionEngine:
                     for span in line.get("spans", []):
                         # Check if span overlaps with our rect
                         span_rect = fitz.Rect(span["bbox"])
+                        # We look for intersection to find the specific font used in this area
                         if span_rect.intersects(rect):
-                            font_size = span["size"]
-                            font_name = span["font"]
-                            return font_size, font_name
+                            return span["size"], span["font"]
         except (AttributeError, KeyError, json.JSONDecodeError, TypeError):
-            # If anything fails, just use defaults
+            # If anything fails during font detection, just use defaults
             pass
 
         return font_size, font_name
 
     def redact_page(self, page):
-        """Finds patterns on a page and applies physical redactions."""
+        """
+        Finds patterns on a page, cleans the area, and inserts new text.
+        Crucial: Insertions happen AFTER redactions are applied.
+        """
         text = page.get_text("text")
         matches = self.find_matches(text)
 
+        # We need a queue to store text details.
+        # If we insert text immediately inside the loop, the subsequent
+        # page.apply_redactions() call would draw a white box over our NEW text.
+        insertions_queue = []
         count = 0
-        # Use set() to avoid trying to redact the same word twice on one page
-        for pii_str, replacement in set(matches):
+
+        # Use set() to avoid processing duplicates multiple times if regex matches overlap
+        for matched_text, replacement in set(matches):
             # Generate random string if replacement is None or empty
             if not replacement:
                 replacement = "".join(
-                    random.choices(string.ascii_letters + string.digits, k=len(pii_str))
+                    random.choices(
+                        string.ascii_letters + string.digits, k=len(matched_text)
+                    )
                 )
 
-            areas = page.search_for(pii_str)
+            # Find all coordinates of the matched text on this page
+            areas = page.search_for(matched_text)
+
             for rect in areas:
-                # Extract font size and name from the original text
+                # 1. ANALYSIS: Capture font info from the original text
                 font_size, font_name = self._get_font_info(page, rect)
 
-                # Draw a white rectangle to cover the original text
-                page.draw_rect(rect, fill=(1, 1, 1), color=None)
+                # 2. MARKING: Add the redaction annotation.
+                # fill=(1, 1, 1) ensures the area becomes white after application.
+                page.add_redact_annot(rect, fill=(1, 1, 1))
 
-                # Then insert the replacement text with the correct font size
-                # Position the text at the top-left of the rect area
-                text_point = fitz.Point(rect.x0, rect.y0 + font_size * 0.75)
-
-                try:
-                    # Try to use the original font name
-                    page.insert_text(
-                        text_point,
-                        replacement,
-                        fontsize=font_size,
-                        fontname=font_name,
-                        color=(0, 0, 0),
-                    )
-                except Exception:
-                    # If font is not available, fall back to helvetica
-                    page.insert_text(
-                        text_point,
-                        replacement,
-                        fontsize=font_size,
-                        fontname="helv",
-                        color=(0, 0, 0),
-                    )
-
+                # Store the insertion task for step 4
+                insertions_queue.append(
+                    {
+                        "rect": rect,
+                        "text": replacement,
+                        "fontsize": font_size,
+                        "fontname": font_name,
+                    }
+                )
                 count += 1
+
+        # 3. CLEANING: Apply the redactions.
+        # This physically removes the old text and draws the white fill.
+        # It MUST happen before we write the new text.
+        page.apply_redactions()
+
+        # 4. WRITING: Insert the new text onto the now-clean page
+        for task in insertions_queue:
+            rect = task["rect"]
+
+            # Estimate baseline position (y0 + ascent adjustment)
+            # 0.8 is a heuristic; exact baseline calc requires font metrics but this is usually sufficient
+            text_point = fitz.Point(rect.x0, rect.y0 + task["fontsize"] * 0.8)
+
+            try:
+                # Try to use the original font name
+                page.insert_text(
+                    text_point,
+                    task["text"],
+                    fontsize=task["fontsize"],
+                    fontname=task["fontname"],
+                    color=(0, 0, 0),
+                )
+            except Exception:
+                # If the specific font isn't embedded or recognized for writing,
+                # fall back to standard Helvetica
+                page.insert_text(
+                    text_point,
+                    task["text"],
+                    fontsize=task["fontsize"],
+                    fontname="helv",
+                    color=(0, 0, 0),
+                )
 
         return count
 
@@ -111,8 +150,14 @@ class RedactionEngine:
         total_redactions = 0
 
         for page in doc:
+            # We process page by page.
+            # Note: apply_redactions() is called INSIDE redact_page now.
             total_redactions += self.redact_page(page)
 
+        # Save with high compression and garbage collection
+        # garbage=4: Remove unused objects
+        # deflate=True: Compress streams
+        # clean=True: Standardize structure
         doc.save(output_path, garbage=4, deflate=True, clean=True)
         doc.close()
         return total_redactions
