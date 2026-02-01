@@ -90,6 +90,13 @@ class RedactionEngine:
             # Find all coordinates of the matched text on this page
             areas = page.search_for(matched_text)
 
+            # Shrink the rectangle height by 10% to avoid hitting lines above/below
+            for i in range(len(areas)):
+                # .y1 is the bottom of the box, .y0 is the top.
+                # We pull them slightly toward the middle.
+                areas[i].y1 -= areas[i].height * 0.1
+                areas[i].y0 += areas[i].height * 0.1
+
             for rect in areas:
                 # 1. ANALYSIS: Capture font info from the original text
                 font_size, font_name = self._get_font_info(page, rect)
